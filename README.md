@@ -20,6 +20,12 @@ npm run preview
 
 將 `dist/` 部署到支援 HTTPS 的靜態網站主機。首次連線載入後，Service Worker 會快取 app shell 與程式資產，之後可離線開啟；已瀏覽過的 Unsplash 相片也會快取供離線檢視。
 
+## GitHub Pages
+
+此專案已設定 GitHub Actions 部署至 GitHub Pages。將程式推送至 GitHub repository 的 `main` 分支後，在 repository 的 **Settings → Pages → Build and deployment → Source** 選擇 **GitHub Actions**，之後每次推送 `main` 都會自動建置及發布。部署網址通常為 `https://<帳號>.github.io/<repository>/`。
+
+GitHub Pages 網站通常是公開的。旅遊紀錄存於各裝置瀏覽器的 IndexedDB，不會隨網站部署上傳或跨裝置同步；部署只發布應用程式檔案。請勿將匯出的 `ktrip_Backup_*.json`、`ktrip_Journal_*.md`、`ktrip_Expenses_*.csv` 或其他含私人資料的檔案加入 Git。這些常見匯出檔及資料庫檔已列入 `.gitignore`，但新增其他檔名的備份時仍需自行確認 Git 狀態。
+
 ## 離線資料與升級
 
 - 旅記、行程、購物、匯率與支出儲存在 IndexedDB `ktrip-offline`，相片資料也包含在旅記資料中。
