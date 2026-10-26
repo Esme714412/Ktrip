@@ -1,5 +1,21 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { loadAppData, saveAppData } from './src/storage';
+import {
+  DndContext,
+  KeyboardSensor,
+  PointerSensor,
+  TouchSensor,
+  closestCenter,
+  useSensor,
+  useSensors
+} from '@dnd-kit/core';
+import {
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { 
   Compass, 
   BookOpen, 
@@ -8,7 +24,6 @@ import {
   Sliders, 
   MapPin, 
   Bookmark, 
-  Image as ImageIcon, 
   Plus, 
   Trash2, 
   Download, 
@@ -26,7 +41,6 @@ import {
   Database,
   Clock,
   Sparkles,
-  Paperclip,
   ChevronLeft,
   ChevronRight,
   ShoppingBag,
@@ -35,8 +49,48 @@ import {
   HelpCircle,
   Check,
   Pencil,
-  Search
+  Search,
+  GripVertical,
+  ImagePlus,
+  Smile
 } from 'lucide-react';
+
+function SortableItineraryCard({ id, children, editMode }) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging
+  } = useSortable({ id, disabled: !editMode });
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={{
+        transform: CSS.Transform.toString(transform),
+        transition,
+        zIndex: isDragging ? 1 : undefined
+      }}
+      className={`flex items-center gap-1 ${isDragging ? 'relative z-10 opacity-80' : ''}`}
+    >
+      {editMode && (
+        <button
+          type="button"
+          {...attributes}
+          {...listeners}
+          className="text-neutral-400 hover:text-neutral-800 active:text-neutral-900 p-1 rounded-lg cursor-grab active:cursor-grabbing touch-none shrink-0"
+          title="按住拖動調整順序"
+          aria-label="按住拖動調整行程順序"
+        >
+          <GripVertical className="w-4 h-4" />
+        </button>
+      )}
+      <div className="min-w-0 flex-1">{children}</div>
+    </div>
+  );
+}
 
 // --- 初始示範資料 ---
 const INITIAL_RATES = {
@@ -192,16 +246,6 @@ const INITIAL_EXPENSES = [
 ];
 
 const EXPENSE_CATEGORIES = ['餐飲美食', '交通運輸', '購物開箱', '住宿旅店', '門票景點', '生活其他'];
-const QUICK_MOODS = ['☀️ 晴朗陽光', '🍁 賞楓散策', '☕ 悠閒慢活', '🌙 愜意秋夜', '🍜 療癒美味', '📸 漫步捕捉', '🌧️ 微雨漫遊'];
-
-const SAMPLE_TRAVEL_IMAGES = [
-  'https://images.unsplash.com/photo-1493976040374-85c8e12f0c0e?w=800&auto=format&fit=crop&q=80',
-  'https://images.unsplash.com/photo-1503899036084-c55cdd92da26?w=800&auto=format&fit=crop&q=80',
-  'https://images.unsplash.com/photo-1554118811-1e0d58224f24?w=800&auto=format&fit=crop&q=80',
-  'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=800&auto=format&fit=crop&q=80',
-  'https://images.unsplash.com/photo-1528164344705-475426879c0d?w=800&auto=format&fit=crop&q=80',
-  'https://images.unsplash.com/photo-1476514525535-07fb3b4ae5f1?w=800&auto=format&fit=crop&q=80'
-];
 
 const SAMPLE_MARKDOWN_ITINERARY = `# Day 1 - 京都古都探索
 - 09:30 清水寺 | 和服體驗漫遊二年坂、三年坂
@@ -223,6 +267,11 @@ export default function App() {
   const [installPromptEvent, setInstallPromptEvent] = useState(null);
   const [isDataReady, setIsDataReady] = useState(false);
   const [storageError, setStorageError] = useState('');
+  const itinerarySensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
+  );
 
   // 今日日期顯示
   const todayString = useMemo(() => {
@@ -236,7 +285,7 @@ export default function App() {
   const [posts, setPosts] = useState(INITIAL_POSTS);
   const [itinerary, setItinerary] = useState(INITIAL_ITINERARY);
   const [shoppingList, setShoppingList] = useState(INITIAL_SHOPPING);
-  const [expenses, setExpenses] = useState(INITIAL_EXPENSES);
+  const [expenses, setExpenses] = useState<(typeof INITIAL_EXPENSES[number] & { createdAt?: string })[]>(INITIAL_EXPENSES);
   const [tripStartDate, setTripStartDate] = useState(INITIAL_TRIP_START_DATE);
   const [displayCurrency, setDisplayCurrency] = useState('TWD');
 
@@ -340,11 +389,30 @@ export default function App() {
   }, [displayCurrency, isDataReady]);
 
   // --- 刪除確認 Modal 狀態 ---
-  const [deleteConfirmModal, setDeleteConfirmModal] = useState({
+  const [confirmDialog, setConfirmDialog] = useState({
     isOpen: false,
-    postId: null,
-    title: ''
+    title: '',
+    message: '',
+    confirmLabel: '確認刪除',
+    onConfirm: null
   });
+  const requestConfirmation = (title, message, onConfirm, confirmLabel = '確認刪除') => {
+    setConfirmDialog({ isOpen: true, title, message, confirmLabel, onConfirm });
+  };
+  const closeConfirmation = () => {
+    setConfirmDialog({
+      isOpen: false,
+      title: '',
+      message: '',
+      confirmLabel: '確認刪除',
+      onConfirm: null
+    });
+  };
+  const confirmAction = () => {
+    const onConfirm = confirmDialog.onConfirm;
+    closeConfirmation();
+    onConfirm?.();
+  };
 
   // --- 燈箱 (Lightbox) 狀態 ---
   const [lightbox, setLightbox] = useState({
@@ -361,8 +429,11 @@ export default function App() {
   const [postMood, setPostMood] = useState('');
   const [postCategory, setPostCategory] = useState(() => categories[0] || '景點漫遊');
   const [selectedImages, setSelectedImages] = useState([]);
-  const [customImageUrl, setCustomImageUrl] = useState('');
-  const [isPhotoPickerOpen, setIsPhotoPickerOpen] = useState(false);
+  const [postComposerFields, setPostComposerFields] = useState({
+    location: false,
+    category: false,
+    mood: false
+  });
   const [feedFilterTag, setFeedFilterTag] = useState('ALL');
   const [feedSearch, setFeedSearch] = useState('');
 
@@ -370,6 +441,7 @@ export default function App() {
 
   // --- 行程與購物清單狀態 ---
   const [planSubTab, setPlanSubTab] = useState('itinerary'); // 'itinerary' | 'shopping'
+  const [itineraryEditMode, setItineraryEditMode] = useState(false);
   const [isAddItineraryOpen, setIsAddItineraryOpen] = useState(false);
   const [editingItineraryId, setEditingItineraryId] = useState(null);
   const [newItDay, setNewItDay] = useState('Day 1');
@@ -434,8 +506,7 @@ export default function App() {
     setPostMood('');
     setPostCategory(categories[0] || '景點漫遊');
     setSelectedImages([]);
-    setCustomImageUrl('');
-    setIsPhotoPickerOpen(false);
+    setPostComposerFields({ location: false, category: false, mood: false });
     setIsBottomSheetOpen(true);
   };
 
@@ -478,6 +549,7 @@ export default function App() {
     setPostLocation('');
     setPostMood('');
     setSelectedImages([]);
+    setPostComposerFields({ location: false, category: false, mood: false });
     setIsBottomSheetOpen(false);
   };
 
@@ -488,25 +560,23 @@ export default function App() {
     setPostMood(post.mood || '');
     setPostCategory(post.category || categories[0] || '景點漫遊');
     setSelectedImages(post.images || []);
-    setCustomImageUrl('');
-    setIsPhotoPickerOpen(false);
+    setPostComposerFields({
+      location: Boolean(post.location),
+      category: Boolean(post.category),
+      mood: Boolean(post.mood)
+    });
     setIsBottomSheetOpen(true);
   };
 
   const requestDeletePost = (post) => {
-    setDeleteConfirmModal({
-      isOpen: true,
-      postId: post.id,
-      title: post.location || '此篇手帳'
-    });
-  };
-
-  const confirmDeletePost = () => {
-    if (deleteConfirmModal.postId) {
-      setPosts(posts.filter(p => p.id !== deleteConfirmModal.postId));
-      showToast('已安全刪除手帳紀錄');
-    }
-    setDeleteConfirmModal({ isOpen: false, postId: null, title: '' });
+    requestConfirmation(
+      '確認刪除這篇手帳？',
+      `「${post.location || '此篇手帳'}」將被永久移除且無法復原。`,
+      () => {
+        setPosts(posts.filter(p => p.id !== post.id));
+        showToast('已安全刪除手帳紀錄');
+      }
+    );
   };
 
   const handleToggleBookmark = (id) => {
@@ -560,8 +630,34 @@ export default function App() {
   };
 
   const handleDeleteItinerary = (id) => {
-    setItinerary(itinerary.filter(item => item.id !== id));
-    showToast('已刪除此行程');
+    const item = itinerary.find(entry => entry.id === id);
+    if (!item) return;
+    requestConfirmation(
+      '確認刪除行程？',
+      `「${item.location}」將被永久移除且無法復原。`,
+      () => {
+        setItinerary(itinerary.filter(entry => entry.id !== id));
+        showToast('已刪除此行程');
+      }
+    );
+  };
+
+  const handleReorderItinerary = (activeId, overId) => {
+    if (!overId || activeId === overId || !itineraryEditMode) return;
+
+    const activeIndex = itinerary.findIndex(item => item.id === activeId);
+    const overIndex = itinerary.findIndex(item => item.id === overId);
+    if (activeIndex === -1 || overIndex === -1) return;
+
+    const reordered = [...itinerary];
+    const [movedItem] = reordered.splice(activeIndex, 1);
+    const targetIndex = reordered.findIndex(item => item.id === overId);
+    const targetItem = reordered[targetIndex];
+    reordered.splice(targetIndex, 0, {
+      ...movedItem,
+      day: targetItem.day || 'Day 1'
+    });
+    setItinerary(reordered);
   };
 
   const handleOpenNewItinerary = () => {
@@ -687,15 +783,23 @@ export default function App() {
     }
 
     if (importMode === 'replace') {
-      setItinerary(parsedMarkdownItems);
-      showToast(`已替換全部行程，共匯入 ${parsedMarkdownItems.length} 項行程！`);
+      requestConfirmation(
+        '確認替換全部行程？',
+        '目前的行程會被匯入內容取代，此操作無法復原。',
+        () => {
+          setItinerary(parsedMarkdownItems);
+          showToast(`已替換全部行程，共匯入 ${parsedMarkdownItems.length} 項行程！`);
+          setIsMdImportOpen(false);
+          setMdInputText('');
+        },
+        '確認替換'
+      );
     } else {
       setItinerary([...itinerary, ...parsedMarkdownItems]);
       showToast(`已追加匯入 ${parsedMarkdownItems.length} 項行程！`);
+      setIsMdImportOpen(false);
+      setMdInputText('');
     }
-
-    setIsMdImportOpen(false);
-    setMdInputText('');
   };
 
   // 購物清單操作
@@ -703,8 +807,16 @@ export default function App() {
     setShoppingList(shoppingList.map(item => item.id === id ? { ...item, bought: !item.bought } : item));
   };
   const handleDeleteShopping = (id) => {
-    setShoppingList(shoppingList.filter(item => item.id !== id));
-    showToast('已移除購物項目');
+    const item = shoppingList.find(entry => entry.id === id);
+    if (!item) return;
+    requestConfirmation(
+      '確認刪除購物項目？',
+      `「${item.item}」將被永久移除且無法復原。`,
+      () => {
+        setShoppingList(shoppingList.filter(entry => entry.id !== id));
+        showToast('已移除購物項目');
+      }
+    );
   };
   const handleOpenNewShopping = () => {
     setEditingShoppingId(null);
@@ -809,7 +921,11 @@ export default function App() {
       )));
       showToast(`💰 支出已更新 ${formatCurrency(convertToDisplayCurrency(parsedAmount, expCurrency))}`);
     } else {
-      setExpenses([{ id: `exp-${Date.now()}`, ...expenseDetails }, ...expenses]);
+      setExpenses([{
+        id: `exp-${Date.now()}`,
+        createdAt: new Date().toISOString(),
+        ...expenseDetails
+      }, ...expenses]);
       showToast(`💰 已記錄支出 ${formatCurrency(convertToDisplayCurrency(parsedAmount, expCurrency))}`);
     }
 
@@ -825,8 +941,16 @@ export default function App() {
   };
 
   const handleDeleteExpense = (id) => {
-    setExpenses(expenses.filter(e => e.id !== id));
-    showToast('已移除該筆支出');
+    const expense = expenses.find(item => item.id === id);
+    if (!expense) return;
+    requestConfirmation(
+      '確認刪除支出？',
+      `「${expense.title}」將被永久移除且無法復原。`,
+      () => {
+        setExpenses(expenses.filter(item => item.id !== id));
+        showToast('已移除該筆支出');
+      }
+    );
   };
 
   const totalDisplayAmount = useMemo(() => {
@@ -881,11 +1005,17 @@ export default function App() {
       showToast('請至少保留一個分類！', 'error');
       return;
     }
-    setCategories(categories.filter(c => c !== cat));
-    if (postCategory === cat) {
-      setPostCategory(categories.find(c => c !== cat) || '景點漫遊');
-    }
-    showToast(`已移除分類「${cat}」`);
+    requestConfirmation(
+      '確認刪除分類？',
+      `「${cat}」將從分類清單移除，既有手帳內容不會刪除。`,
+      () => {
+        setCategories(categories.filter(c => c !== cat));
+        if (postCategory === cat) {
+          setPostCategory(categories.find(c => c !== cat) || '景點漫遊');
+        }
+        showToast(`已移除分類「${cat}」`);
+      }
+    );
   };
 
   const handleExportJournalMarkdown = () => {
@@ -1045,8 +1175,13 @@ export default function App() {
 
   // 篩選記帳
   const filteredExpenses = useMemo(() => {
-    if (expFilterCategory === 'ALL') return expenses;
-    return expenses.filter(e => e.category === expFilterCategory);
+    return expenses
+      .filter(expense => expFilterCategory === 'ALL' || expense.category === expFilterCategory)
+      .sort((a, b) => {
+        const dateOrder = String(b.date || '').localeCompare(String(a.date || ''));
+        if (dateOrder) return dateOrder;
+        return String(b.createdAt || '').localeCompare(String(a.createdAt || ''));
+      });
   }, [expenses, expFilterCategory]);
 
   const handleInstallApp = async () => {
@@ -1358,10 +1493,25 @@ export default function App() {
               <div className="space-y-4">
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-1">
-                    <span className="text-xs text-neutral-500 font-medium">依天數規劃順暢景點</span>
+                    <span className="text-xs text-neutral-500 font-medium">
+                      {itineraryEditMode ? '編輯模式 · 拖曳 ≡ 可排序及跨天移動' : '依天數規劃行程'}
+                    </span>
                   </div>
 
                   <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setItineraryEditMode(mode => !mode)}
+                      aria-label={itineraryEditMode ? '完成編輯行程' : '編輯行程排序與刪除'}
+                      title={itineraryEditMode ? '完成編輯' : '編輯行程'}
+                      className={`p-2 rounded-xl border shadow-2xs transition-all active:scale-95 ${
+                        itineraryEditMode
+                          ? 'bg-amber-100 border-amber-300 text-amber-900'
+                          : 'bg-white border-neutral-300 text-neutral-700 hover:bg-neutral-50'
+                      }`}
+                    >
+                      {itineraryEditMode ? <Check className="w-4 h-4" /> : <Pencil className="w-4 h-4" />}
+                    </button>
                     {/* Markdown 批量匯入按鈕 */}
                     <button
                       onClick={() => setIsMdImportOpen(true)}
@@ -1389,7 +1539,16 @@ export default function App() {
                     <p className="text-xs text-neutral-500">尚無行程排程，點擊右上角新增或透過 Markdown 批量匯入！</p>
                   </div>
                 ) : (
-                  Object.entries(groupedItinerary).map(([dayTitle, items]) => (
+                  <DndContext
+                    sensors={itinerarySensors}
+                    collisionDetection={closestCenter}
+                    onDragEnd={({ active, over }) => handleReorderItinerary(active.id, over?.id)}
+                  >
+                    <SortableContext
+                      items={itinerary.map(item => item.id)}
+                      strategy={verticalListSortingStrategy}
+                    >
+                  {Object.entries(groupedItinerary).map(([dayTitle, items]) => (
                     <div key={dayTitle} className="bg-white rounded-3xl p-4 border border-neutral-200/90 shadow-2xs space-y-2.5">
                       <div className="flex items-center justify-between pb-2 border-b border-neutral-100">
                         <div className="flex items-center gap-2">
@@ -1409,8 +1568,8 @@ export default function App() {
 
                       <div className="space-y-2">
                         {items.map(item => (
+                          <SortableItineraryCard key={item.id} id={item.id} editMode={itineraryEditMode}>
                           <div
-                            key={item.id}
                             className={`p-2.5 rounded-2xl border transition-all flex items-start justify-between gap-2.5 ${
                               item.completed
                                 ? 'bg-neutral-50/70 border-neutral-200 opacity-60'
@@ -1457,20 +1616,25 @@ export default function App() {
                               >
                                 <Pencil className="w-3.5 h-3.5" />
                               </button>
-                              <button
-                                onClick={() => handleDeleteItinerary(item.id)}
-                                className="text-neutral-300 hover:text-rose-500 p-1 rounded-lg"
-                                title="刪除"
-                                aria-label={`刪除行程：${item.location}`}
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
+                              {itineraryEditMode && (
+                                <button
+                                  onClick={() => handleDeleteItinerary(item.id)}
+                                  className="text-neutral-300 hover:text-rose-500 p-1 rounded-lg"
+                                  title="刪除"
+                                  aria-label={`刪除行程：${item.location}`}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
                             </div>
                           </div>
+                          </SortableItineraryCard>
                         ))}
                       </div>
                     </div>
-                  ))
+                  ))}
+                    </SortableContext>
+                  </DndContext>
                 )}
               </div>
             )}
@@ -1657,8 +1821,8 @@ export default function App() {
 
                         <div className="flex items-center gap-2">
                           <div className="text-right font-mono">
-                            <span className="font-bold text-xs text-neutral-900 block">{formatCurrency(convertedAmount)}</span>
-                            <span className="text-[10px] text-neutral-400 block">{item.amount.toLocaleString()} {item.currency}</span>
+                            <span className="font-bold text-xs text-neutral-900 block">{formatCurrency(item.amount, item.currency)}</span>
+                            <span className="text-[10px] text-neutral-400 block">≈ {formatCurrency(convertedAmount)}</span>
                           </div>
                           <div className="flex items-center shrink-0">
                             <button
@@ -1993,31 +2157,33 @@ export default function App() {
 
       </main>
 
-      {/* ========================================================= */}
-      {/* 刪除貼文二次確認彈窗 (Double Confirmation Modal)            */}
-      {/* ========================================================= */}
-      {deleteConfirmModal.isOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
-          <div className="bg-white rounded-3xl max-w-xs w-full p-5 shadow-2xl border border-neutral-200 text-center space-y-3">
+      {confirmDialog.isOpen && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-xs">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="confirmation-title"
+            className="bg-white rounded-3xl max-w-xs w-full p-5 shadow-2xl border border-neutral-200 text-center space-y-3"
+          >
             <div className="w-11 h-11 bg-rose-50 text-rose-600 rounded-2xl flex items-center justify-center mx-auto">
               <Trash2 className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="font-bold text-sm text-neutral-900">確認刪除這篇手帳？</h3>
-              <p className="text-xs text-neutral-400 mt-1">「{deleteConfirmModal.title}」將被永久移除且無法復原。</p>
+              <h3 id="confirmation-title" className="font-bold text-sm text-neutral-900">{confirmDialog.title}</h3>
+              <p className="text-xs text-neutral-400 mt-1">{confirmDialog.message}</p>
             </div>
             <div className="flex gap-2 pt-1">
               <button
-                onClick={() => setDeleteConfirmModal({ isOpen: false, postId: null, title: '' })}
+                onClick={closeConfirmation}
                 className="flex-1 py-2 rounded-xl border border-neutral-200 text-neutral-600 text-xs font-semibold hover:bg-neutral-50"
               >
                 取消
               </button>
               <button
-                onClick={confirmDeletePost}
+                onClick={confirmAction}
                 className="flex-1 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold"
               >
-                確認刪除
+                {confirmDialog.confirmLabel}
               </button>
             </div>
           </div>
@@ -2105,54 +2271,149 @@ export default function App() {
         <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 backdrop-blur-xs transition-opacity duration-300">
           <div className="absolute inset-0" onClick={() => setIsBottomSheetOpen(false)} />
 
-          <div className="relative w-full max-w-xl bg-white rounded-t-[32px] p-5 sm:p-6 shadow-2xl border-t border-neutral-200 max-h-[90vh] overflow-y-auto">
+          <div className="relative w-full max-w-xl bg-white rounded-t-[28px] p-5 sm:p-6 shadow-2xl border-t border-neutral-200 max-h-[90vh] overflow-y-auto">
             <div className="w-12 h-1.5 bg-neutral-300 rounded-full mx-auto mb-4" />
 
-            <div className="flex items-center justify-between pb-3 border-b border-neutral-100">
-              <div className="flex items-center gap-2">
-                <div className="p-1.5 rounded-lg bg-amber-100 text-amber-800">
-                  <Sparkles className="w-4 h-4" />
-                </div>
-                <div>
-                  <h3 className="font-bold text-sm text-neutral-900">
-                    {editingPostId ? '編輯旅行紀錄' : '記錄旅行時刻'}
-                  </h3>
-                  <p className="text-[11px] text-neutral-400">寫下文字、打卡地點並附上照片</p>
-                </div>
-              </div>
-
+            <div className="grid grid-cols-3 items-center pb-3 border-b border-neutral-100">
               <button
                 type="button"
                 onClick={() => setIsBottomSheetOpen(false)}
-                className="p-1 rounded-full text-neutral-400 hover:text-neutral-700 hover:bg-neutral-100 transition-all"
+                className="justify-self-start text-sm text-neutral-500 hover:text-neutral-900"
               >
-                <X className="w-5 h-5" />
+                取消
               </button>
+              <h3 className="justify-self-center font-bold text-sm text-neutral-900">
+                {editingPostId ? '編輯手帳' : '新增手帳'}
+              </h3>
+              <span />
             </div>
 
-            <form onSubmit={handleCreatePost} className="space-y-4 mt-3">
-              {/* 日記主文輸入區 */}
-              <div>
+            <form onSubmit={handleCreatePost} className="mt-4">
+              <div className="flex gap-3">
+                <div className="w-9 h-9 rounded-full bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">
+                  <Sparkles className="w-4 h-4" />
+                </div>
                 <textarea
                   value={postContent}
                   onChange={(e) => setPostContent(e.target.value)}
-                  placeholder="旅程中發生了什麼有趣的事？記下現在的感動..."
-                  rows={4}
-                  className="w-full text-sm placeholder:text-neutral-400 focus:outline-none resize-none bg-neutral-50/70 p-3.5 rounded-2xl border border-neutral-200 leading-relaxed"
+                  placeholder="分享旅途中的新鮮事..."
+                  rows={5}
+                  className="min-h-32 flex-1 text-sm placeholder:text-neutral-400 focus:outline-none resize-y leading-relaxed"
                   autoFocus
                 />
               </div>
 
-              {/* 已附加的照片清單預覽 */}
+              <div className="mt-3 flex items-center gap-1 border-t border-neutral-100 pt-2">
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  aria-label="新增照片"
+                  title="新增照片"
+                  className="p-2 rounded-xl text-neutral-500 hover:bg-neutral-100 hover:text-emerald-700"
+                >
+                  <ImagePlus className="w-5 h-5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPostComposerFields(fields => ({ ...fields, location: !fields.location }))}
+                  aria-label="新增地點"
+                  title="新增地點"
+                  aria-pressed={postComposerFields.location}
+                  className={`p-2 rounded-xl hover:bg-neutral-100 ${postComposerFields.location ? 'text-rose-600 bg-rose-50' : 'text-neutral-500'}`}
+                >
+                  <MapPin className="w-5 h-5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPostComposerFields(fields => ({ ...fields, category: !fields.category }))}
+                  aria-label="新增分類"
+                  title="新增分類"
+                  aria-pressed={postComposerFields.category}
+                  className={`p-2 rounded-xl hover:bg-neutral-100 ${postComposerFields.category ? 'text-amber-700 bg-amber-50' : 'text-neutral-500'}`}
+                >
+                  <Tag className="w-5 h-5" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPostComposerFields(fields => ({ ...fields, mood: !fields.mood }))}
+                  aria-label="新增心情"
+                  title="新增心情"
+                  aria-pressed={postComposerFields.mood}
+                  className={`p-2 rounded-xl hover:bg-neutral-100 ${postComposerFields.mood ? 'text-violet-700 bg-violet-50' : 'text-neutral-500'}`}
+                >
+                  <Smile className="w-5 h-5" />
+                </button>
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  onChange={handleImageUpload}
+                  accept="image/*"
+                  className="hidden"
+                />
+                <span className="ml-auto text-[11px] text-neutral-400">
+                  {selectedImages.length > 0 ? `已選 ${selectedImages.length} 張照片` : '新增內容'}
+                </span>
+              </div>
+
+              {postComposerFields.location && (
+                <div className="mt-3">
+                  <label htmlFor="post-location" className="sr-only">打卡定位地點</label>
+                  <input
+                    id="post-location"
+                    type="text"
+                    value={postLocation}
+                    onChange={(e) => setPostLocation(e.target.value)}
+                    placeholder="輸入地點"
+                    className="w-full px-3 py-2 rounded-xl border border-neutral-200 text-sm bg-neutral-50/50 focus:outline-none focus:ring-1 focus:ring-neutral-900"
+                  />
+                </div>
+              )}
+
+              {postComposerFields.category && (
+                <div className="mt-3">
+                  <label htmlFor="post-category" className="sr-only">手帳分類標籤</label>
+                  <select
+                    id="post-category"
+                    value={postCategory}
+                    onChange={(e) => setPostCategory(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-neutral-200 text-sm bg-neutral-50/50 focus:outline-none"
+                  >
+                    {categories.map(cat => (
+                      <option key={cat} value={cat}>{cat}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
+              {postComposerFields.mood && (
+                <div className="mt-3">
+                  <label htmlFor="post-mood" className="sr-only">旅行心情與天氣氛圍</label>
+                  <input
+                    id="post-mood"
+                    type="text"
+                    value={postMood}
+                    onChange={(e) => setPostMood(e.target.value)}
+                    placeholder="記下當下的心情或天氣"
+                    className="w-full px-3 py-2 rounded-xl border border-neutral-200 text-sm bg-neutral-50/50 focus:outline-none focus:ring-1 focus:ring-neutral-900"
+                  />
+                </div>
+              )}
+
               {selectedImages.length > 0 && (
-                <div>
+                <div className="mt-3">
                   <div className="flex gap-2 overflow-x-auto py-1">
                     {selectedImages.map((img, i) => (
                       <div key={i} className="relative w-20 h-20 rounded-xl overflow-hidden shrink-0 border border-neutral-200 group">
-                        <img src={img} alt="preview" className="w-full h-full object-cover" />
+                        <img src={img} alt={`已選相片 ${i + 1}`} className="w-full h-full object-cover" />
                         <button
                           type="button"
-                          onClick={() => setSelectedImages(selectedImages.filter((_, idx) => idx !== i))}
+                          onClick={() => requestConfirmation(
+                            '確認移除照片？',
+                            '這張照片會從目前編輯中的手帳移除。',
+                            () => setSelectedImages(images => images.filter((_, idx) => idx !== i)),
+                            '確認移除'
+                          )}
+                          aria-label={`移除第 ${i + 1} 張照片`}
                           className="absolute top-1 right-1 bg-black/60 hover:bg-black text-white p-0.5 rounded-full transition-all"
                         >
                           <X className="w-3 h-3" />
@@ -2163,159 +2424,12 @@ export default function App() {
                 </div>
               )}
 
-              {/* 定位打卡與分類設定 */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                <div>
-                  <label className="text-[11px] font-semibold text-neutral-600 block mb-1 flex items-center gap-1">
-                    <MapPin className="w-3.5 h-3.5 text-rose-500" />
-                    打卡定位地點
-                  </label>
-                  <input
-                    type="text"
-                    value={postLocation}
-                    onChange={(e) => setPostLocation(e.target.value)}
-                    placeholder="例如: 京都 清水寺、首爾 弘大"
-                    className="w-full px-3 py-2 rounded-xl border border-neutral-200 text-xs bg-neutral-50/50 focus:outline-none focus:ring-1 focus:ring-neutral-900"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-[11px] font-semibold text-neutral-600 block mb-1 flex items-center gap-1">
-                    <Tag className="w-3.5 h-3.5 text-neutral-500" />
-                    手帳分類標籤
-                  </label>
-                  <select
-                    value={postCategory}
-                    onChange={(e) => setPostCategory(e.target.value)}
-                    className="w-full px-3 py-2 rounded-xl border border-neutral-200 text-xs bg-neutral-50/50 focus:outline-none"
-                  >
-                    {categories.map(cat => (
-                      <option key={cat} value={cat}>{cat}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* 心情/天氣氛圍自由輸入與快捷表情標籤 */}
-              <div>
-                <label className="text-[11px] font-semibold text-neutral-600 block mb-1">
-                  旅行心情 / 天氣氛圍（自由輸入）
-                </label>
-                <input
-                  type="text"
-                  value={postMood}
-                  onChange={(e) => setPostMood(e.target.value)}
-                  placeholder="自訂當下心情或天氣 (例: 🍁 秋意微涼、☀️ 萬里無雲)"
-                  className="w-full px-3 py-2 rounded-xl border border-neutral-200 text-xs bg-neutral-50/50 focus:outline-none focus:ring-1 focus:ring-neutral-900 mb-1.5"
-                />
-                <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
-                  {QUICK_MOODS.map(m => (
-                    <button
-                      key={m}
-                      type="button"
-                      onClick={() => setPostMood(m)}
-                      className="px-2 py-0.5 rounded-full text-[11px] bg-neutral-100 text-neutral-600 hover:bg-neutral-200 shrink-0"
-                    >
-                      {m}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* 照片選擇開關 */}
-              <div className="pt-1">
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setIsPhotoPickerOpen(!isPhotoPickerOpen)}
-                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-neutral-200 text-xs font-medium text-neutral-700 hover:bg-neutral-50 transition-colors"
-                  >
-                    <ImageIcon className="w-4 h-4 text-emerald-600" />
-                    <span>挑選範本相片</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-neutral-200 text-xs font-medium text-neutral-700 hover:bg-neutral-50 transition-colors"
-                  >
-                    <Paperclip className="w-4 h-4 text-indigo-600" />
-                    <span>上傳手機/本機相片</span>
-                  </button>
-                  <input
-                    type="file"
-                    ref={fileInputRef}
-                    onChange={handleImageUpload}
-                    accept="image/*"
-                    className="hidden"
-                  />
-                </div>
-
-                {isPhotoPickerOpen && (
-                  <div className="mt-3 p-3 bg-neutral-50 rounded-2xl border border-neutral-200/80 space-y-2.5">
-                    <span className="text-[11px] text-neutral-500 font-medium block">
-                      精選旅行圖庫（點選直接加入）：
-                    </span>
-                    <div className="grid grid-cols-6 gap-1.5">
-                      {SAMPLE_TRAVEL_IMAGES.map((img, idx) => (
-                        <button
-                          key={idx}
-                          type="button"
-                          onClick={() => {
-                            if (!selectedImages.includes(img)) {
-                              setSelectedImages([...selectedImages, img]);
-                            }
-                          }}
-                          className={`aspect-square rounded-xl overflow-hidden border transition-all ${
-                            selectedImages.includes(img) 
-                              ? 'border-neutral-900 ring-2 ring-neutral-900/40' 
-                              : 'border-neutral-200 hover:opacity-85'
-                          }`}
-                        >
-                          <img src={img} alt="sample" className="w-full h-full object-cover" />
-                        </button>
-                      ))}
-                    </div>
-
-                    <div className="flex gap-2 pt-1">
-                      <input
-                        type="url"
-                        value={customImageUrl}
-                        onChange={(e) => setCustomImageUrl(e.target.value)}
-                        placeholder="或輸入照片網址 https://..."
-                        className="flex-1 text-xs px-3 py-1.5 rounded-xl border border-neutral-200 bg-white focus:outline-none"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (customImageUrl.trim()) {
-                            setSelectedImages([...selectedImages, customImageUrl.trim()]);
-                            setCustomImageUrl('');
-                          }
-                        }}
-                        className="text-xs px-3 py-1.5 rounded-xl bg-neutral-800 hover:bg-neutral-900 font-medium text-white shrink-0"
-                      >
-                        加入
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* 底部按鈕 */}
-              <div className="pt-2 flex gap-2">
-                <button
-                  type="button"
-                  onClick={() => setIsBottomSheetOpen(false)}
-                  className="flex-1 py-3 rounded-2xl border border-neutral-200 text-neutral-600 text-xs font-semibold hover:bg-neutral-50"
-                >
-                  取消
-                </button>
+              <div className="mt-5 flex justify-end border-t border-neutral-100 pt-3">
                 <button
                   type="submit"
-                  className="flex-1 py-3 rounded-2xl bg-neutral-900 hover:bg-neutral-800 text-white text-xs font-bold shadow-md"
+                  className="px-6 py-2.5 rounded-full bg-neutral-900 hover:bg-neutral-800 text-white text-sm font-bold shadow-sm"
                 >
-                  {editingPostId ? '儲存修改' : '發布手帳'}
+                  {editingPostId ? '儲存' : '發布'}
                 </button>
               </div>
             </form>
