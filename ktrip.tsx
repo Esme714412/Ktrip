@@ -874,7 +874,7 @@ export default function App() {
     setEditingExpenseId(null);
     setExpTitle('');
     setExpCategory(EXPENSE_CATEGORIES[0]);
-    setExpCurrency('JPY');
+    setExpCurrency('KRW');
     setExpAmount('');
     setExpPaymentMethod('現金');
     setExpDate(new Date().toISOString().slice(0, 10));
